@@ -40,6 +40,25 @@ func (mediaMetadataClient *MediaMetadataClient) GetOneProjectMedia(projectId int
 	return response, nil
 }
 
+func (mediaMetadataClient *MediaMetadataClient) CreateNewMedia(name string, projectId int32) (*pbMediaMediaMetadata.MediaMetadataResponse, error) {
+	response, err := mediaMetadataClient.client.NewMediaMetadata(context.Background(),&pbMediaMediaMetadata.CreateNewMediaMetadataRequest{
+		Name:                     name,
+		SiteName:                 "PROJECT",
+		Length:                   -1,
+		Status:                   0,
+		Thumbnail:                "",
+		ProjectId:                projectId,
+		AwsBucketWholeMedia:      "",
+		AwsStorageNameWholeMedia: "",
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
+}
+
 
 func InitMediaMetadataClient() *MediaMetadataClient  {
 	env := Models.GetEnvStruct()

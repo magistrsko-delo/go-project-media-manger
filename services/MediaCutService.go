@@ -1,16 +1,22 @@
 package services
 
 import (
+	"encoding/json"
 	"errors"
-	"fmt"
+	"github.com/streadway/amqp"
 	"go-project-media-manger/Models"
 	"go-project-media-manger/Models/DTO"
 	"go-project-media-manger/Models/Input"
 	"go-project-media-manger/grpc_client"
+	"math/rand"
+	"strconv"
 )
 
 type MediaCutService struct {
 	TimeShiftClient *grpc_client.TimeShiftClient
+	MediaMetadataClient *grpc_client.MediaMetadataClient
+	MediaChunksClient *grpc_client.MediaChunksClient
+	RabbitMQ *RabbitMQ
 }
 
 func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32, inputCut *Input.InputCut) (*DTO.ResponseDTO, error)  {
@@ -20,31 +26,43 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 		return nil, err
 	}
 
-	if ( len(timeShiftChunkMediaRsp.GetData()[0].GetChunks()) == 0 ) {
+	if len(timeShiftChunkMediaRsp.GetData()[0].GetChunks()) == 0 {
 		return nil,  errors.New("no media chunks")
 	}
 
-	mediaChunks1080p := timeShiftChunkMediaRsp.GetData()[0].GetChunks()
+	newMediaRsp, err := mediaCutService.MediaMetadataClient.CreateNewMedia(
+		timeShiftChunkMediaRsp.GetName() + "_PROJECT_" + strconv.Itoa(int(projectId)) + "_" + strconv.Itoa(rand.Intn(1000000000000)),
+		projectId)
 
+	if err != nil  {
+		return nil, err
+	}
+	mediaChunks1080p := timeShiftChunkMediaRsp.GetData()[0].GetChunks()
+	resolution := timeShiftChunkMediaRsp.GetData()[0].GetResolution()
 	mediaLength := 0.0
 	startMediaSearch := true
 	endMediaSearch := false
 	rabbitMQMediaCutQueueData := [] *Models.MediaCutDataQueue {}
 	position := 0
-	indexedChunks := []int32{}
 
 	for i := 0; i < len(mediaChunks1080p); i++ {
 		currMediaLength := mediaLength + mediaChunks1080p[i].GetLength()
 		if !startMediaSearch && endMediaSearch && currMediaLength < inputCut.To {
 			// take chunk and index..)
-			indexedChunks = append(indexedChunks, mediaChunks1080p[i].GetChunkId())
+			_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
+			if err != nil  {
+				return nil, err
+			}
 			position++
 		}
 
 		if startMediaSearch && currMediaLength > inputCut.From && currMediaLength > inputCut.To {
 			if mediaLength == inputCut.From && currMediaLength == inputCut.To {
 				// take whole chunk for media
-				indexedChunks = append(indexedChunks, mediaChunks1080p[i].GetChunkId())
+				_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
+				if err != nil  {
+					return nil, err
+				}
 			} else if mediaLength == inputCut.From  {
 				// take from chunk 0.0 til to
 				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
@@ -52,7 +70,9 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 					0.0,
 					mediaChunks1080p[i].GetLength() - ( currMediaLength - inputCut.To),
 					mediaChunks1080p[i].GetChunkId(),
-					int32(position))
+					int32(position),
+					resolution,
+					newMediaRsp.MediaId,)
 
 			} else if currMediaLength == inputCut.To {
 				// take from to the end
@@ -61,7 +81,9 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 					inputCut.From - mediaLength,
 					mediaChunks1080p[i].GetLength(),
 					mediaChunks1080p[i].GetChunkId(),
-					int32(position))
+					int32(position),
+					resolution,
+					newMediaRsp.MediaId,)
 			} else {
 				// take from to.
 				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
@@ -69,14 +91,20 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 					inputCut.From - mediaLength,
 					mediaChunks1080p[i].GetLength() - ( currMediaLength - inputCut.To),
 					mediaChunks1080p[i].GetChunkId(),
-					int32(position))
+					int32(position),
+					resolution,
+					newMediaRsp.MediaId,
+					)
 			}
 			position++
 			break
 		} else if startMediaSearch && currMediaLength > inputCut.From {
 			if mediaLength == inputCut.From {
 				// take whole chunk for indexing
-				indexedChunks = append(indexedChunks, mediaChunks1080p[i].GetChunkId())
+				_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
+				if err != nil  {
+					return nil, err
+				}
 			} else {
 				// take chunk (from - mediaLenght) to end
 				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
@@ -84,7 +112,10 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 					inputCut.From - mediaLength,
 					mediaChunks1080p[i].GetLength(),
 					mediaChunks1080p[i].GetChunkId(),
-					int32(position))
+					int32(position),
+					resolution,
+					newMediaRsp.MediaId,
+					)
 			}
 
 			position++
@@ -95,14 +126,20 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 			// take chunks from beggining to   ( chunkLenght - ( currLenght - toLenght) )
 
 			if currMediaLength - inputCut.To == 0 {
-				indexedChunks = append(indexedChunks, mediaChunks1080p[i].GetChunkId())
+				_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
+				if err != nil  {
+					return nil, err
+				}
 			} else {
 				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
 					rabbitMQMediaCutQueueData,
 					0.0,
 					mediaChunks1080p[i].GetLength() - ( currMediaLength - inputCut.To),
 					mediaChunks1080p[i].GetChunkId(),
-					int32(position))
+					int32(position),
+					resolution,
+					newMediaRsp.MediaId,
+					)
 			}
 			position++
 			break
@@ -110,26 +147,61 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 		mediaLength = currMediaLength
 	}
 
-	fmt.Println("MEDIA CUT CHUNKS: ", rabbitMQMediaCutQueueData)
-	for i := 0; i < len(rabbitMQMediaCutQueueData); i++ {
-		fmt.Println(rabbitMQMediaCutQueueData[i])
+	err = mediaCutService.publishMessageOnQueue(rabbitMQMediaCutQueueData)
+
+	if err != nil {
+		return nil, err
 	}
 
-	fmt.Println("Indexed chunks: ", indexedChunks)
+	newtimeShiftChunkMediaRsp, err := mediaCutService.TimeShiftClient.GetMediaChunkInfo(newMediaRsp.GetMediaId())
+	if err != nil {
+		return nil, err
+	}
 
 	return &DTO.ResponseDTO{
 		Status:  200,
 		Message: "New project media created",
-		Data:    nil,
+		Data:    newtimeShiftChunkMediaRsp,
 	}, nil
 }
 
-func (mediaCutService *MediaCutService) addRabbitMqDataWorker(dataArray [] *Models.MediaCutDataQueue, from float64, to float64, chunkId int32, position int32) [] *Models.MediaCutDataQueue  {
+func (mediaCutService *MediaCutService) addRabbitMqDataWorker(
+	dataArray [] *Models.MediaCutDataQueue,
+	from float64,
+	to float64,
+	chunkId int32,
+	position int32,
+	resolution string,
+	mediaId int32) [] *Models.MediaCutDataQueue {
 	mediaCutDataQueue := &Models.MediaCutDataQueue{
-		ChunkId:  chunkId,
-		From:     from,
-		To:       to,
-		Position: position,
+		ChunkId:  	chunkId,
+		From:     	from,
+		To:       	to,
+		Position: 	position,
+		Resolution: resolution,
+		MediaId:	mediaId,
 	}
 	return append(dataArray, mediaCutDataQueue)
+}
+
+func (mediaCutService *MediaCutService) publishMessageOnQueue(rabbitMQMediaCutQueueData [] *Models.MediaCutDataQueue) error {
+	dataForQueue, err := json.Marshal(rabbitMQMediaCutQueueData)
+	if err != nil {
+		return err
+	}
+	err = mediaCutService.RabbitMQ.Ch.Publish(
+		"",
+		mediaCutService.RabbitMQ.q.Name,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:     "text/plain",
+			DeliveryMode:    amqp.Persistent,
+			Priority:        0,
+			Body:            dataForQueue,
+		})
+	if err != nil {
+		return err
+	}
+	return nil
 }

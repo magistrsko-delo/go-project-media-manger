@@ -6,6 +6,7 @@ import (
 	"github.com/rs/cors"
 	"go-project-media-manger/Models"
 	"go-project-media-manger/router"
+	"go-project-media-manger/services"
 	"log"
 	"net/http"
 )
@@ -18,11 +19,17 @@ func init()  {
 }
 
 func main()  {
+
+	rabbitMQ := services.InitRabbitMQ()
+
+	defer rabbitMQ.Conn.Close()
+	defer rabbitMQ.Ch.Close()
+
 	r := mux.NewRouter()
 
 	api := r.PathPrefix("/v1").Subrouter()
 	projectMediaRouter := &router.ProjectMediaRouter{Router:api}
-	projectMediaRouter.RegisterHandlers()
+	projectMediaRouter.RegisterHandlers(rabbitMQ)
 
 	r.NotFoundHandler = http.HandlerFunc(NotFound)
 
