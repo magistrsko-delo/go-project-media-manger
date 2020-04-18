@@ -22,8 +22,8 @@ func main()  {
 
 	rabbitMQ := services.InitRabbitMQ()
 
-	defer rabbitMQ.Conn.Close()
-	defer rabbitMQ.Ch.Close()
+	// defer rabbitMQ.Conn.Close()
+	// defer rabbitMQ.Ch.Close()
 
 	r := mux.NewRouter()
 
