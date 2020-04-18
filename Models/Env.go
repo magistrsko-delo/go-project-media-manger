@@ -21,6 +21,7 @@ type Env struct {
 	RabbitPassword string
 	RabbitQueue string
 	RabbitHost string
+	RabbitPort string
 	AawsStorageUrl string
 }
 
@@ -39,6 +40,7 @@ func InitEnv()  {
 		RabbitPassword:   			os.Getenv("RABBIT_PASSWORD"),
 		RabbitQueue:      			os.Getenv("RABBIT_QUEUE"),
 		RabbitHost:       			os.Getenv("RABBIT_HOST"),
+		RabbitPort: 				os.Getenv("RABBIT_PORT"),
 	}
 	fmt.Println(envStruct)
 }

@@ -15,7 +15,7 @@ type RabbitMQ struct {
 func InitRabbitMQ() *RabbitMQ  {
 
 	env := Models.GetEnvStruct()
-	conn, err := amqp.Dial("amqp://" + env.RabbitUser + ":" + env.RabbitPassword + "@" + env.RabbitHost + ":5672")
+	conn, err := amqp.Dial("amqp://" + env.RabbitUser + ":" + env.RabbitPassword + "@" + env.RabbitHost + ":" + env.RabbitPort)
 	failOnError(err, "Failed to connect to RabbitMQ")
 
 	ch, err := conn.Channel()
