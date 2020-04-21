@@ -37,115 +37,122 @@ func (mediaCutService *MediaCutService) CutMedia(mediaId int32, projectId int32,
 	if err != nil  {
 		return nil, err
 	}
-	mediaChunks1080p := timeShiftChunkMediaRsp.GetData()[0].GetChunks()
-	resolution := timeShiftChunkMediaRsp.GetData()[0].GetResolution()
-	mediaLength := 0.0
-	startMediaSearch := true
-	endMediaSearch := false
+
 	rabbitMQMediaCutQueueData := [] *Models.MediaCutDataQueue {}
-	position := 0
 
-	for i := 0; i < len(mediaChunks1080p); i++ {
-		currMediaLength := mediaLength + mediaChunks1080p[i].GetLength()
-		if !startMediaSearch && endMediaSearch && currMediaLength < inputCut.To {
-			// take chunk and index..)
-			_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
-			if err != nil  {
-				return nil, err
+	for r := 0; r < len(timeShiftChunkMediaRsp.GetData()); r++ {
+
+		mediaChunks := timeShiftChunkMediaRsp.GetData()[r].GetChunks()
+		resolution := timeShiftChunkMediaRsp.GetData()[r].GetResolution()
+		mediaLength := 0.0
+		startMediaSearch := true
+		endMediaSearch := false
+		position := 0
+
+		for i := 0; i < len(mediaChunks); i++ {
+			currMediaLength := mediaLength + mediaChunks[i].GetLength()
+			if !startMediaSearch && endMediaSearch && currMediaLength < inputCut.To {
+				// take chunk and index..)
+				_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks[i].GetChunkId())
+				if err != nil  {
+					return nil, err
+				}
+				position++
 			}
-			position++
+
+			if startMediaSearch && currMediaLength > inputCut.From && currMediaLength > inputCut.To {
+				if mediaLength == inputCut.From && currMediaLength == inputCut.To {
+					// take whole chunk for media
+					_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks[i].GetChunkId())
+					if err != nil  {
+						return nil, err
+					}
+				} else if mediaLength == inputCut.From  {
+					// take from chunk 0.0 til to
+					rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
+						rabbitMQMediaCutQueueData,
+						0.0,
+						mediaChunks[i].GetLength() - ( currMediaLength - inputCut.To),
+						mediaChunks[i].GetChunkId(),
+						int32(position),
+						resolution,
+						newMediaRsp.MediaId,)
+
+				} else if currMediaLength == inputCut.To {
+					// take from to the end
+					rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
+						rabbitMQMediaCutQueueData,
+						inputCut.From - mediaLength,
+						mediaChunks[i].GetLength(),
+						mediaChunks[i].GetChunkId(),
+						int32(position),
+						resolution,
+						newMediaRsp.MediaId,)
+				} else {
+					// take from to.
+					rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
+						rabbitMQMediaCutQueueData,
+						inputCut.From - mediaLength,
+						mediaChunks[i].GetLength() - ( currMediaLength - inputCut.To),
+						mediaChunks[i].GetChunkId(),
+						int32(position),
+						resolution,
+						newMediaRsp.MediaId,
+					)
+				}
+				position++
+				break
+			} else if startMediaSearch && currMediaLength > inputCut.From {
+				if mediaLength == inputCut.From {
+					// take whole chunk for indexing
+					_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks[i].GetChunkId())
+					if err != nil  {
+						return nil, err
+					}
+				} else {
+					// take chunk (from - mediaLenght) to end
+					rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
+						rabbitMQMediaCutQueueData,
+						inputCut.From - mediaLength,
+						mediaChunks[i].GetLength(),
+						mediaChunks[i].GetChunkId(),
+						int32(position),
+						resolution,
+						newMediaRsp.MediaId,
+					)
+				}
+
+				position++
+				startMediaSearch = false
+				endMediaSearch = true
+
+			} else if endMediaSearch && currMediaLength >= inputCut.To {
+				// take chunks from beggining to   ( chunkLenght - ( currLenght - toLenght) )
+
+				if currMediaLength - inputCut.To == 0 {
+					_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks[i].GetChunkId())
+					if err != nil  {
+						return nil, err
+					}
+				} else {
+					rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
+						rabbitMQMediaCutQueueData,
+						0.0,
+						mediaChunks[i].GetLength() - ( currMediaLength - inputCut.To),
+						mediaChunks[i].GetChunkId(),
+						int32(position),
+						resolution,
+						newMediaRsp.MediaId,
+					)
+				}
+				position++
+				break
+			}
+			mediaLength = currMediaLength
 		}
 
-		if startMediaSearch && currMediaLength > inputCut.From && currMediaLength > inputCut.To {
-			if mediaLength == inputCut.From && currMediaLength == inputCut.To {
-				// take whole chunk for media
-				_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
-				if err != nil  {
-					return nil, err
-				}
-			} else if mediaLength == inputCut.From  {
-				// take from chunk 0.0 til to
-				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
-					rabbitMQMediaCutQueueData,
-					0.0,
-					mediaChunks1080p[i].GetLength() - ( currMediaLength - inputCut.To),
-					mediaChunks1080p[i].GetChunkId(),
-					int32(position),
-					resolution,
-					newMediaRsp.MediaId,)
-
-			} else if currMediaLength == inputCut.To {
-				// take from to the end
-				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
-					rabbitMQMediaCutQueueData,
-					inputCut.From - mediaLength,
-					mediaChunks1080p[i].GetLength(),
-					mediaChunks1080p[i].GetChunkId(),
-					int32(position),
-					resolution,
-					newMediaRsp.MediaId,)
-			} else {
-				// take from to.
-				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
-					rabbitMQMediaCutQueueData,
-					inputCut.From - mediaLength,
-					mediaChunks1080p[i].GetLength() - ( currMediaLength - inputCut.To),
-					mediaChunks1080p[i].GetChunkId(),
-					int32(position),
-					resolution,
-					newMediaRsp.MediaId,
-					)
-			}
-			position++
-			break
-		} else if startMediaSearch && currMediaLength > inputCut.From {
-			if mediaLength == inputCut.From {
-				// take whole chunk for indexing
-				_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
-				if err != nil  {
-					return nil, err
-				}
-			} else {
-				// take chunk (from - mediaLenght) to end
-				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
-					rabbitMQMediaCutQueueData,
-					inputCut.From - mediaLength,
-					mediaChunks1080p[i].GetLength(),
-					mediaChunks1080p[i].GetChunkId(),
-					int32(position),
-					resolution,
-					newMediaRsp.MediaId,
-					)
-			}
-
-			position++
-			startMediaSearch = false
-			endMediaSearch = true
-
-		} else if endMediaSearch && currMediaLength >= inputCut.To {
-			// take chunks from beggining to   ( chunkLenght - ( currLenght - toLenght) )
-
-			if currMediaLength - inputCut.To == 0 {
-				_, err := mediaCutService.MediaChunksClient.LinkMediaWithChunks(newMediaRsp.GetMediaId(), int32(position), resolution, mediaChunks1080p[i].GetChunkId())
-				if err != nil  {
-					return nil, err
-				}
-			} else {
-				rabbitMQMediaCutQueueData = mediaCutService.addRabbitMqDataWorker(
-					rabbitMQMediaCutQueueData,
-					0.0,
-					mediaChunks1080p[i].GetLength() - ( currMediaLength - inputCut.To),
-					mediaChunks1080p[i].GetChunkId(),
-					int32(position),
-					resolution,
-					newMediaRsp.MediaId,
-					)
-			}
-			position++
-			break
-		}
-		mediaLength = currMediaLength
 	}
+
 
 	err = mediaCutService.publishMessageOnQueue(rabbitMQMediaCutQueueData)
 
