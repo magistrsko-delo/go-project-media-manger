@@ -79,7 +79,7 @@ func main()  {
 	if err == nil {
 		fmt.Println("success: TRACING")
 		tracer, closer := jaeger.NewTracer(
-			"chunk-downloader",
+			"go-project-media-manager",
 			jaeger.NewConstSampler(true),
 			jaeger.NewRemoteReporter(
 				sender,
