@@ -6,6 +6,7 @@ require (
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/golang/protobuf v1.4.0
 	github.com/gorilla/mux v1.7.4
+	github.com/grpc-ecosystem/go-grpc-middleware v1.2.0
 	github.com/heptiolabs/healthcheck v0.0.0-20180807145615-6ff867650f40
 	github.com/joho/godotenv v1.3.0
 	github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9
